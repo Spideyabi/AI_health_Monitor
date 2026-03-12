@@ -1,0 +1,22 @@
+# Digital Health Wellbeing Application Task List
+
+- [x] Project Setup & Infrastructure
+    - [x] Initialize Next.js app with Tailwind CSS and Framer Motion
+    - [x] Configure PWA support for cross-platform availability
+    - [x] Set up basic folder structure and design tokens
+- [x] Core UI/UX Implementation
+    - [x] Design and build a premium, glassmorphic Dashboard
+    - [x] Create responsive navigation for Mobile/Tablet/Laptop
+    - [x] Implement smooth micro-animations and transitions
+- [x] Health Monitoring Features
+    - [x] Implement Screen Time & Usage Analysis logic
+    - [x] Develop Mental Stress detection algorithm (mock/heuristic based)
+    - [x] Integrate Sleep Detection using activity patterns
+    - [x] Add Activity Tracker (Walked distance via Geolocation)
+- [x] Automation & Integration
+    - [x] Create background sync/tracking simulation for automated data acquisition
+    - [x] Implement Health Insights and Recommendations engine
+- [x] Verification & Polish
+    - [x] Test across different device viewports
+    - [x] Final UI/UX polish and "WOW" factor additions
+    - [x] Create walkthrough.md
