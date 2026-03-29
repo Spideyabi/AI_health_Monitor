@@ -11,8 +11,9 @@ import {
   CheckCircle2, 
   AlertCircle, 
   Home, 
+  MapPin, 
+  ShieldCheck,
   Hospital,
-  User,
   Save,
   Droplets,
   Moon,
@@ -20,7 +21,9 @@ import {
   Coffee,
   EyeOff,
   Activity,
-  Zap
+  Zap,
+  Phone,
+  Navigation
 } from "lucide-react";
 
 import { analyzeHealth } from "@/lib/aiHealthService";
@@ -33,43 +36,24 @@ export default function HealthCheck() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [diagnosis, setDiagnosis] = useState(null);
   const [isSaved, setIsSaved] = useState(false);
+  const [location, setLocation] = useState(null);
+  const [nearbyHospitals, setNearbyHospitals] = useState([]);
 
   const [formData, setFormData] = useState({
-    // Step 1: Lifestyle
     lastMeal: "",
     junkFood: "no",
     waterIntake: "normal",
     sleepHours: "",
-    // Step 2: Symptoms
     primarySymptom: "",
     symptomLocation: "",
     severity: "low",
     temperature: "normal",
-    // Step 3: Timeline
     duration: "",
     onset: "gradual",
     consistency: "intermittent",
     allergies: "",
-    // Step 4: History
     conditions: ""
   });
-
-  const isLocationSkippable = (symptom) => {
-    const s = symptom.toLowerCase().trim();
-    return s === "headache" || s === "fever" || s === "head ache";
-  };
-
-  const validateStep = (currentStep) => {
-    switch(currentStep) {
-      case 1: return formData.lastMeal && formData.sleepHours;
-      case 2: 
-        if (isLocationSkippable(formData.primarySymptom)) return formData.primarySymptom;
-        return formData.primarySymptom && formData.symptomLocation;
-      case 3: return formData.duration;
-      case 4: return true;
-      default: return true;
-    }
-  };
 
   const steps = [
     { id: 1, title: "Lifestyle", icon: <Utensils size={18} /> },
@@ -77,6 +61,30 @@ export default function HealthCheck() {
     { id: 3, title: "Timeline", icon: <ClipboardList size={18} /> },
     { id: 4, title: "History", icon: <Hospital size={18} /> }
   ];
+
+  const showTemperature = (symptom) => {
+    return symptom.toLowerCase().includes("fever");
+  };
+
+  const getNearbyHospitals = () => {
+    return [
+      { name: "City General Hospital", phone: "+1234567890", address: "123 Main St", distance: "1.2 km" },
+      { name: "St. Jude Medical Center", phone: "+1234567891", address: "456 Oak Ave", distance: "2.5 km" },
+      { name: "Lakeside Community Health", phone: "+1234567892", address: "789 Lake View", distance: "3.8 km" },
+      { name: "Sunrise Urgent Care", phone: "+1234567893", address: "101 Sun Blvd", distance: "4.1 km" },
+      { name: "Central Wellness Clinic", phone: "+1234567894", address: "202 Center Plaza", distance: "5.5 km" }
+    ];
+  };
+
+  const validateStep = (currentStep) => {
+    switch(currentStep) {
+      case 1: return formData.lastMeal && formData.sleepHours;
+      case 2: return formData.primarySymptom;
+      case 3: return formData.duration;
+      case 4: return true;
+      default: return true;
+    }
+  };
 
   const handleNext = () => {
     if (validateStep(step)) {
@@ -87,22 +95,30 @@ export default function HealthCheck() {
 
   const handleCalculateDiagnosis = async () => {
     setIsAnalyzing(true);
+    
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      });
+    }
+
     try {
-      // Map structured data + User Profile into AI Input
       const aiInput = {
         age: user?.age || "Not specified",
         gender: user?.gender || "Not specified",
-        weight: user?.weight ? `${user.weight}kg` : "Not specified",
-        height: user?.height ? `${user.height}cm` : "Not specified",
         vitals: vitals,
         lifestyle: `Sleep: ${formData.sleepHours}h. Last meal: ${formData.lastMeal}. Junk food: ${formData.junkFood}. Water: ${formData.waterIntake}.`,
-        symptoms: `${formData.primarySymptom} ${isLocationSkippable(formData.primarySymptom) ? "" : `in ${formData.symptomLocation}`}. Severity: ${formData.severity}. Temp: ${formData.temperature}.`,
+        symptoms: `${formData.primarySymptom} ${formData.symptomLocation ? `in ${formData.symptomLocation}` : ""}. Severity: ${formData.severity}. Temp: ${formData.temperature}.`,
         timeline: `Duration: ${formData.duration}. Onset: ${formData.onset}. Consistency: ${formData.consistency}.`,
-        history: `Allergies: ${formData.allergies || "None"}. Chronic: ${user?.healthHistory || "None"}. Current: ${formData.conditions || "None"}.`
+        history: `Allergies: ${formData.allergies || "None"}. History: ${formData.conditions || "None"}.`,
+        severity: formData.severity
       };
       
       const result = await analyzeHealth(aiInput);
       setDiagnosis(result);
+      if (result.type === 'hospital' || result.type === 'doctor') {
+        setNearbyHospitals(getNearbyHospitals());
+      }
       setStep(5);
     } catch (error) {
       console.error("AI Analysis failed:", error);
@@ -133,7 +149,6 @@ export default function HealthCheck() {
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4">
-      {/* Progress Bar */}
       {step < 5 && (
         <div className="flex items-center justify-between mb-12 relative">
           <div className="absolute top-1/2 left-0 w-full h-1 bg-white/5 -translate-y-1/2 z-0" />
@@ -172,7 +187,7 @@ export default function HealthCheck() {
                 <label className="text-sm text-zinc-400 mb-2 block font-medium">Last Main Meal (e.g. Pasta, Salad)</label>
                 <input
                   type="text"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
                   value={formData.lastMeal}
                   onChange={(e) => setFormData({...formData, lastMeal: e.target.value})}
                   required
@@ -183,7 +198,7 @@ export default function HealthCheck() {
                 <div className="flex-1">
                   <label className="text-sm text-zinc-400 mb-2 block font-medium">Water Intake</label>
                   <select
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3.5 outline-none focus:border-purple-500/50 transition-all text-zinc-300"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3.5 outline-none focus:border-purple-500/50 transition-all text-zinc-300 font-bold"
                     value={formData.waterIntake}
                     onChange={(e) => setFormData({...formData, waterIntake: e.target.value})}
                   >
@@ -196,7 +211,7 @@ export default function HealthCheck() {
                   <label className="text-sm text-zinc-400 mb-2 block font-medium">Sleep Last Night (Hours)</label>
                   <input
                     type="number"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3.5 outline-none focus:border-purple-500/50 transition-all"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3.5 outline-none focus:border-purple-500/50 transition-all font-bold"
                     placeholder="e.g. 7"
                     value={formData.sleepHours}
                     onChange={(e) => setFormData({...formData, sleepHours: e.target.value})}
@@ -206,7 +221,7 @@ export default function HealthCheck() {
               </div>
 
               <div>
-                <label className="text-sm text-zinc-400 mb-2 block font-medium">Any Junk Food?</label>
+                <label className="text-sm text-zinc-400 mb-2 block font-medium">Consumed Junk Food Recently?</label>
                 <div className="flex gap-2">
                   {['yes', 'no'].map((opt) => (
                     <button
@@ -243,49 +258,51 @@ export default function HealthCheck() {
             exit={{ opacity: 0, x: -20 }}
             className="stats-card p-10"
           >
-            <h2 className="text-2xl font-bold mb-8">Symptoms & Pain</h2>
+            <h2 className="text-2xl font-bold mb-8">Symptoms & Severity</h2>
             
             <div className="space-y-6 mb-10">
-              <div className="flex gap-4">
-                <div className="flex-2">
-                  <label className="text-sm text-zinc-400 mb-2 block font-medium">Main Symptom (e.g. Fever)</label>
+              <div className="grid gap-6">
+                <div>
+                  <label className="text-sm text-zinc-400 mb-2 block font-medium">Main Symptom</label>
                   <input
                     type="text"
+                    placeholder="e.g. Fever, Headache"
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all"
                     value={formData.primarySymptom}
                     onChange={(e) => setFormData({...formData, primarySymptom: e.target.value})}
                     required
                   />
                 </div>
-                <div className="flex-1">
-                  <label className="text-sm text-zinc-400 mb-2 block font-medium">Temp Level</label>
-                  <select
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all text-zinc-300"
-                    value={formData.temperature}
-                    onChange={(e) => setFormData({...formData, temperature: e.target.value})}
-                  >
-                    <option value="normal">Normal</option>
-                    <option value="warm">Warm</option>
-                    <option value="fever">High Fever</option>
-                  </select>
+                <div>
+                  <label className="text-sm text-zinc-400 mb-2 block font-medium">Symptom location (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Stomach, Head"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
+                    value={formData.symptomLocation}
+                    onChange={(e) => setFormData({...formData, symptomLocation: e.target.value})}
+                  />
                 </div>
               </div>
 
-              {!isLocationSkippable(formData.primarySymptom) && (
+              {showTemperature(formData.primarySymptom) && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
+                  className="p-4 bg-red-500/5 rounded-2xl border border-red-500/10"
                 >
-                  <label className="text-sm text-zinc-400 mb-2 block font-medium">Exact Location</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Upper Stomach"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all"
-                    value={formData.symptomLocation}
-                    onChange={(e) => setFormData({...formData, symptomLocation: e.target.value})}
-                    required
-                  />
+                  <label className="text-sm text-red-400/80 mb-2 block font-bold flex items-center gap-2">
+                    <Activity size={14} /> Recorded Temperature
+                  </label>
+                  <select
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-red-500/50 transition-all text-zinc-300 font-bold"
+                    value={formData.temperature}
+                    onChange={(e) => setFormData({...formData, temperature: e.target.value})}
+                  >
+                    <option value="normal">Normal (98.6°F)</option>
+                    <option value="warm">Warm / Mild Fever</option>
+                    <option value="fever">High Fever</option>
+                  </select>
                 </motion.div>
               )}
 
@@ -300,7 +317,7 @@ export default function HealthCheck() {
                         formData.severity === level 
                           ? level === 'low' ? "bg-emerald-500/20 border-emerald-500 text-emerald-400" :
                             level === 'medium' ? "bg-amber-500/20 border-amber-500 text-amber-400" :
-                            "bg-red-500/20 border-red-500 text-red-400"
+                            "bg-red-500/20 border-red-500 text-red-400 shadow-[0_0_20px_rgba(239,68,68,0.2)]"
                           : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10"
                       }`}
                     >
@@ -312,13 +329,12 @@ export default function HealthCheck() {
             </div>
 
             <div className="flex justify-between">
-              <button onClick={handleBack} className="flex items-center text-zinc-400 hover:text-white transition-colors">
+              <button onClick={handleBack} className="flex items-center text-zinc-400 hover:text-white transition-colors font-bold">
                 <ArrowLeft className="mr-2" size={18} /> Back
               </button>
               <button 
                 onClick={handleNext} 
-                disabled={!validateStep(2)}
-                className="btn-primary group disabled:opacity-30 disabled:cursor-not-allowed"
+                className="btn-primary group"
               >
                 Continue <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" />
               </button>
@@ -342,7 +358,7 @@ export default function HealthCheck() {
                   <label className="text-sm text-zinc-400 mb-2 block font-medium">How Long? (Duration)</label>
                   <input
                     type="text"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
                     placeholder="e.g. 3 days"
                     value={formData.duration}
                     onChange={(e) => setFormData({...formData, duration: e.target.value})}
@@ -352,7 +368,7 @@ export default function HealthCheck() {
                 <div className="flex-1">
                   <label className="text-sm text-zinc-400 mb-2 block font-medium">Onset</label>
                   <select
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all text-zinc-300"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all text-zinc-300 font-bold"
                     value={formData.onset}
                     onChange={(e) => setFormData({...formData, onset: e.target.value})}
                   >
@@ -378,27 +394,16 @@ export default function HealthCheck() {
                   ))}
                 </div>
               </div>
-
-              <div>
-                <label className="text-sm text-zinc-400 mb-2 block font-medium">Known Allergies</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Penicillin, Pollen, None"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all"
-                  value={formData.allergies}
-                  onChange={(e) => setFormData({...formData, allergies: e.target.value})}
-                />
-              </div>
             </div>
 
             <div className="flex justify-between">
-              <button onClick={handleBack} className="flex items-center text-zinc-400 hover:text-white transition-colors">
+              <button onClick={handleBack} className="flex items-center text-zinc-400 hover:text-white transition-colors font-bold">
                 <ArrowLeft className="mr-2" size={18} /> Back
               </button>
               <button 
                 onClick={handleNext} 
                 disabled={!validateStep(3)}
-                className="btn-primary group disabled:opacity-30 disabled:cursor-not-allowed"
+                className="btn-primary group"
               >
                 Continue <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" />
               </button>
@@ -414,7 +419,7 @@ export default function HealthCheck() {
             exit={{ opacity: 0, x: -20 }}
             className="stats-card p-10"
           >
-            <h2 className="text-2xl font-bold mb-8">Medical History</h2>
+            <h2 className="text-2xl font-bold mb-8">Medical Context & History</h2>
             
             <div className="space-y-6 mb-10">
               <div>
@@ -422,43 +427,41 @@ export default function HealthCheck() {
                 <input
                   type="text"
                   placeholder="e.g. Asthma, Diabetes, None"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
                   value={formData.conditions}
                   onChange={(e) => setFormData({...formData, conditions: e.target.value})}
                 />
               </div>
 
+              <div>
+                <label className="text-sm text-zinc-400 mb-2 block font-medium">Known Allergies</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Penicillin, Pollen, None"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
+                  value={formData.allergies}
+                  onChange={(e) => setFormData({...formData, allergies: e.target.value})}
+                />
+              </div>
+
               <div className="bg-purple-600/5 rounded-2xl p-6 border border-purple-500/10">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400">
-                    <ClipboardList size={16} />
-                  </div>
-                  <h3 className="text-sm font-bold uppercase tracking-wider">Final Verification</h3>
-                </div>
                 <p className="text-xs text-zinc-500 leading-relaxed">
-                  By submitting this analysis, our AI engine will correlate your reports with medical datasets and your personal profile ({user?.age}y, {user?.gender}) to provide a personalized care plan.
+                  Finalizing will process your symptoms against clinical benchmarks. Ensure all reports are accurate.
                 </p>
               </div>
             </div>
 
             <div className="flex justify-between">
-              <button onClick={handleBack} className="flex items-center text-zinc-400 hover:text-white transition-colors">
+              <button onClick={handleBack} className="flex items-center text-zinc-400 hover:text-white transition-colors font-bold">
                 <ArrowLeft className="mr-2" size={18} /> Back
               </button>
               <button 
                 onClick={handleCalculateDiagnosis} 
                 disabled={isAnalyzing}
-                className="bg-gradient-to-r from-purple-600 to-pink-600 px-8 py-3 rounded-xl font-bold shadow-lg hover:shadow-purple-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
+                className="bg-gradient-to-r from-purple-600 to-pink-600 px-8 py-3 rounded-xl font-bold shadow-lg hover:shadow-purple-500/20 transition-all flex items-center gap-2"
               >
-                {isAnalyzing ? (
-                  <>
-                    <Loader2 className="animate-spin" size={20} /> Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <BrainCircuit size={20} /> Finalize AI Analysis
-                  </>
-                )}
+                {isAnalyzing ? <Loader2 className="animate-spin" size={20} /> : <BrainCircuit size={20} />}
+                {isAnalyzing ? "Analyzing..." : "Review Result"}
               </button>
             </div>
           </motion.div>
@@ -499,13 +502,19 @@ export default function HealthCheck() {
             <div className={`stats-card p-0 overflow-hidden relative border-none shadow-[0_30px_60px_-15px_rgba(0,0,0,0.5)]`}>
               {/* Header Banner */}
               <div className={`p-8 md:p-12 relative ${
-                diagnosis.type === 'hospital' ? 'bg-gradient-to-br from-red-600/20 to-zinc-900 border-b border-red-500/20' : 'bg-gradient-to-br from-emerald-600/20 to-zinc-900 border-b border-emerald-500/20'
+                diagnosis.type === 'hospital' ? 'bg-gradient-to-br from-red-600/20 to-zinc-900 border-b border-red-500/20' : 
+                diagnosis.type === 'doctor' ? 'bg-gradient-to-br from-amber-600/20 to-zinc-900 border-b border-amber-500/20' :
+                'bg-gradient-to-br from-emerald-600/20 to-zinc-900 border-b border-emerald-500/20'
               }`}>
                 <div className="flex flex-col md:flex-row md:items-center gap-6 relative z-10">
                   <div className={`w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg ${
-                    diagnosis.type === 'hospital' ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-emerald-500 text-white shadow-emerald-500/20'
+                    diagnosis.type === 'hospital' ? 'bg-red-500 text-white shadow-red-500/20' : 
+                    diagnosis.type === 'doctor' ? 'bg-amber-500 text-white shadow-amber-500/20' :
+                    'bg-emerald-500 text-white shadow-emerald-500/20'
                   }`}>
-                    {diagnosis.type === 'hospital' ? <Hospital size={40} /> : <Home size={40} />}
+                    {diagnosis.type === 'hospital' ? <Hospital size={40} /> : 
+                     diagnosis.type === 'doctor' ? <Stethoscope size={40} /> : 
+                     <Home size={40} />}
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
@@ -513,7 +522,16 @@ export default function HealthCheck() {
                       <span className="text-[10px] uppercase tracking-[0.3em] font-black text-purple-400">Cognitive Analysis Report</span>
                     </div>
                     <h2 className="text-4xl md:text-5xl font-black mb-2 tracking-tight">{diagnosis.title}</h2>
-                    <p className="text-zinc-400 text-lg max-w-2xl leading-relaxed">{diagnosis.desc}</p>
+                    <p className="text-zinc-400 text-lg max-w-2xl leading-relaxed mb-4">{diagnosis.desc}</p>
+                    
+                    {/* Cause of Illness Mention */}
+                    <div className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 w-fit">
+                      <BrainCircuit size={18} className="text-purple-400" />
+                      <div>
+                        <p className="text-[10px] uppercase font-black tracking-widest text-zinc-500 leading-none mb-1">Potential Cause</p>
+                        <p className="text-sm font-bold text-white leading-none">{diagnosis.cause}</p>
+                      </div>
+                    </div>
                   </div>
                   <button 
                     onClick={handleSaveToDatabase}
@@ -580,8 +598,79 @@ export default function HealthCheck() {
                     </div>
                   </div>
 
-                  {/* Contextual Insights */}
+                  {/* Contextual Insights / Hospital Search */}
                   <div className="space-y-8">
+                    {(diagnosis.type === 'hospital' || diagnosis.type === 'doctor') && (
+                      <div className="space-y-6">
+                        <h3 className={`text-xs uppercase tracking-[0.2em] font-black flex items-center gap-2 ${
+                          diagnosis.type === 'hospital' ? 'text-red-400' : 'text-amber-400'
+                        }`}>
+                          <Hospital size={14} /> Nearby Medical Facilities
+                        </h3>
+                        <div className="grid gap-4">
+                          {nearbyHospitals.map((hospital, i) => (
+                            <motion.div 
+                              key={i}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: i * 0.1 }}
+                              className={`stats-card p-6 bg-white/5 border hover:border-opacity-100 transition-all ${
+                                diagnosis.type === 'hospital' ? 'border-red-500/20 hover:border-red-500/40' : 'border-amber-500/20 hover:border-amber-500/40'
+                              }`}
+                            >
+                              <div className="flex justify-between items-start mb-4">
+                                <div>
+                                  <h4 className="font-bold text-lg">{hospital.name}</h4>
+                                  <p className="text-xs text-zinc-500 flex items-center gap-1">
+                                    <MapPin size={12} /> {hospital.address} • {hospital.distance}
+                                  </p>
+                                </div>
+                                <div className={`p-2 rounded-lg ${
+                                  diagnosis.type === 'hospital' ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'
+                                }`}>
+                                  <Hospital size={20} />
+                                </div>
+                              </div>
+                              <div className="flex gap-3">
+                                <a 
+                                  href={`tel:${hospital.phone}`}
+                                  className="flex-1 py-2 px-4 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-sm font-bold flex items-center justify-center gap-2"
+                                >
+                                  <Phone size={14} /> Appt Call
+                                </a>
+                                <a 
+                                  href={`https://www.google.com/maps/search/${encodeURIComponent(hospital.name + " " + hospital.address)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`flex-1 py-2 px-4 rounded-xl text-white transition-all text-sm font-bold flex items-center justify-center gap-2 ${
+                                    diagnosis.type === 'hospital' ? 'bg-red-600 hover:bg-red-500' : 'bg-amber-600 hover:bg-amber-500'
+                                  }`}
+                                >
+                                  <Navigation size={14} /> Map Direction
+                                </a>
+                              </div>
+                            </motion.div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!diagnosis.doctor && diagnosis.type === 'home' && (
+                       <div className="stats-card p-8 bg-black/40 border-purple-500/20">
+                       <h3 className="text-xs uppercase tracking-[0.2em] font-black text-purple-400 mb-6 flex items-center gap-2">
+                         <BrainCircuit size={14} /> AI Analysis Reasoning
+                       </h3>
+                       <div className="space-y-4">
+                         {diagnosis.aiInsights.map((insight, i) => (
+                           <div key={i} className="flex items-start gap-3">
+                             <div className="w-1.5 h-1.5 rounded-full bg-purple-500 mt-1.5 shrink-0" />
+                             <p className="text-zinc-500 text-xs leading-relaxed italic">{insight}</p>
+                           </div>
+                         ))}
+                       </div>
+                     </div>
+                    )}
+
                     {diagnosis.doctor && (
                       <div className="bg-gradient-to-br from-purple-600 to-indigo-700 rounded-3xl p-8 shadow-2xl shadow-purple-900/40 relative overflow-hidden">
                         <div className="relative z-10 flex items-center gap-6">
@@ -599,20 +688,6 @@ export default function HealthCheck() {
                         </div>
                       </div>
                     )}
-
-                    <div className="stats-card p-8 bg-black/40 border-purple-500/20">
-                      <h3 className="text-xs uppercase tracking-[0.2em] font-black text-purple-400 mb-6 flex items-center gap-2">
-                        <BrainCircuit size={14} /> AI Analysis Reasoning
-                      </h3>
-                      <div className="space-y-4">
-                        {diagnosis.aiInsights.map((insight, i) => (
-                          <div key={i} className="flex items-start gap-3">
-                            <div className="w-1.5 h-1.5 rounded-full bg-purple-500 mt-1.5 shrink-0" />
-                            <p className="text-zinc-500 text-xs leading-relaxed italic">{insight}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -627,8 +702,8 @@ export default function HealthCheck() {
                   setFormData({ 
                     lastMeal: "", junkFood: "no", waterIntake: "normal", sleepHours: "",
                     primarySymptom: "", symptomLocation: "", severity: "low", temperature: "normal",
-                    duration: "", onset: "gradual", consistency: "intermittent", allergies: "",
-                    conditions: "" 
+                    duration: "", onset: "gradual", consistency: "intermittent",
+                    allergies: "", conditions: ""
                   });
                 }}
                 className="btn-primary px-10 py-4 shadow-xl shadow-purple-900/40 hover:-translate-y-1 transition-all"

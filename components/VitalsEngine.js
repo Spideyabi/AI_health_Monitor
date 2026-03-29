@@ -3,7 +3,9 @@
 import { useState, useEffect, createContext, useContext, useRef } from "react";
 
 const VitalsContext = createContext({
-  vitals: { screenTime: 0, stressLevel: 0, steps: 0, distance: 0, sleepQuality: 0, isTracking: false },
+  vitals: { sleep: 0, distance: 0, screenTime: 0 },
+  history: [],
+  recommendations: [],
   user: null,
   isAuthenticated: false,
   isInitializing: true,
@@ -11,34 +13,175 @@ const VitalsContext = createContext({
   signup: async () => ({ success: false }),
   logout: () => {},
   updateProfile: async () => ({ success: false }),
-  setUser: () => {}
+  setUser: () => {},
+  completeRecommendation: () => {}
 });
 
 export function VitalsProvider({ children }) {
   const [vitals, setVitals] = useState({
-    screenTime: 0, // in minutes
-    stressLevel: 24, // 0-100
-    steps: 0,
-    distance: 0, // in km
-    sleepQuality: 85, // 0-100
-    isTracking: true,
+    sleep: 7.2,
+    distance: 4.8,
+    screenTime: 0
   });
 
+  const [history, setHistory] = useState([]);
+  const [recommendations, setRecommendations] = useState([
+    { id: 1, text: "Take a 5-minute eye break", type: "screen", gap: 60, lastDone: Date.now() - 3600000 },
+    { id: 2, text: "Hydrate: Drink 200ml water", type: "health", gap: 120, lastDone: Date.now() - 7200000 },
+    { id: 3, text: "Stand up and stretch", type: "activity", gap: 45, lastDone: Date.now() - 1800000 }
+  ]);
+
+  const [demoMode, setDemoMode] = useState(false);
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isInitializing, setIsInitializing] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(false);
 
   const lastActivityRef = useRef(typeof Date !== 'undefined' ? Date.now() : 0);
 
-  // Initialize Auth from Storage
-  useEffect(() => {
-    const storedUser = localStorage.getItem("vitals_user");
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-      setIsAuthenticated(true);
+  const ensureFullHistory = (realData = []) => {
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const today = new Date();
+    
+    // Create a map of existing data by date
+    const dataMap = {};
+    realData.forEach(item => {
+      dataMap[item.date] = item;
+    });
+
+    // Generate/Fill 7-day window
+    const fullWeek = Array.from({ length: 7 }, (_, i) => {
+      const targetDate = new Date(today);
+      targetDate.setDate(today.getDate() - (6 - i));
+      const dateStr = targetDate.toISOString().split('T')[0];
+      const dayName = days[targetDate.getDay()];
+
+      if (dataMap[dateStr]) {
+        return { ...dataMap[dateStr], day: dayName };
+      } else {
+        // Generate random placeholder for missing days to make the graph look active in demo/new accounts
+        return {
+          day: dayName,
+          date: dateStr,
+          sleep: parseFloat((Math.random() * 2 + 6).toFixed(1)),
+          distance: parseFloat((Math.random() * 4 + 1).toFixed(1)),
+          screenTime: Math.floor(Math.random() * 200) + 60,
+          isPlaceholder: true
+        };
+      }
+    });
+
+    return fullWeek;
+  };
+
+  const syncVitalsToDB = async (currentVitals, email) => {
+    if (!email) return;
+    try {
+      await fetch("/api/vitals/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, vitals: currentVitals }),
+      });
+    } catch (err) {
+      console.error("Failed to sync vitals to DB:", err);
     }
-    setIsInitializing(false);
+  };
+
+  useEffect(() => {
+    const init = async () => {
+      setIsInitializing(true);
+      const storedUser = localStorage.getItem("vitals_user");
+      const isDemo = !storedUser;
+      setDemoMode(isDemo);
+
+      if (storedUser) {
+        const parsedUser = JSON.parse(storedUser);
+        setUser(parsedUser);
+        setIsAuthenticated(true);
+        
+        try {
+          const res = await fetch(`/api/vitals/history?email=${parsedUser.email}`);
+          const data = await res.json();
+          if (data.success) {
+            setHistory(ensureFullHistory(data.history));
+            
+            const todayStr = new Date().toISOString().split('T')[0];
+            const latest = data.history.find(r => r.date === todayStr);
+            if (latest) {
+              setVitals({ sleep: latest.sleep, distance: latest.distance, screenTime: latest.screenTime });
+            }
+          } else {
+            setHistory(ensureFullHistory());
+          }
+        } catch (err) {
+          setHistory(ensureFullHistory());
+        }
+      } else {
+        setHistory(ensureFullHistory());
+      }
+      
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+      setIsInitializing(false);
+    };
+
+    init();
   }, []);
+
+  useEffect(() => {
+    if (isAuthenticated && user?.email) {
+      const interval = setInterval(() => {
+        syncVitalsToDB(vitals, user.email);
+      }, 300000);
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated, user, vitals]);
+
+  useEffect(() => {
+    const checkRecs = setInterval(() => {
+      const now = Date.now();
+      recommendations.forEach(rec => {
+        const minutesSince = (now - rec.lastDone) / 60000;
+        if (minutesSince >= rec.gap) {
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification("Vitals Alert", { body: rec.text, icon: "/favicon.ico" });
+          }
+        }
+      });
+      setRecommendations([...recommendations]);
+    }, 60000);
+    return () => clearInterval(checkRecs);
+  }, [recommendations]);
+
+  const completeRecommendation = (id) => {
+    setRecommendations(prev => prev.map(r => 
+      r.id === id ? { ...r, lastDone: Date.now() } : r
+    ));
+  };
+
+  useEffect(() => {
+    if (demoMode) {
+      const generateRandomStats = () => {
+        setVitals({
+          sleep: parseFloat((Math.random() * (9 - 4) + 4).toFixed(1)),
+          distance: parseFloat((Math.random() * (12 - 1.5) + 1.5).toFixed(1)),
+          screenTime: Math.floor(Math.random() * 480)
+        });
+      };
+      generateRandomStats();
+      const interval = setInterval(generateRandomStats, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [demoMode]);
+
+  useEffect(() => {
+    if (!demoMode && isAuthenticated && user?.email) {
+      const interval = setInterval(() => {
+        setVitals(v => ({ ...v, screenTime: v.screenTime + 1 }));
+      }, 60000);
+      return () => clearInterval(interval);
+    }
+  }, [demoMode, isAuthenticated, user]);
 
   const login = async (email, password) => {
     try {
@@ -47,22 +190,21 @@ export function VitalsProvider({ children }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-
-      // Handle non-JSON responses (like 500 error pages)
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        throw new Error("Server error: Received non-JSON response. Check if MONGODB_URI is set.");
-      }
-
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Login failed");
-      }
-
+      if (!response.ok) throw new Error(data.message || "Login failed");
+      
       setUser(data.user);
       setIsAuthenticated(true);
+      setDemoMode(false);
       localStorage.setItem("vitals_user", JSON.stringify(data.user));
+
+      // Fetch history immediately after login
+      const histRes = await fetch(`/api/vitals/history?email=${data.user.email}`);
+      const histData = await histRes.json();
+      if (histData.success) {
+        setHistory(ensureFullHistory(histData.history));
+      }
+
       return { success: true };
     } catch (error) {
       console.error("Login error:", error);
@@ -77,22 +219,13 @@ export function VitalsProvider({ children }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, password }),
       });
-
-      // Handle non-JSON responses 
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        throw new Error("Server error: Received non-JSON response. Check if MONGODB_URI is set.");
-      }
-
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Signup failed");
-      }
-
+      if (!response.ok) throw new Error(data.message || "Signup failed");
       setUser(data.user);
       setIsAuthenticated(true);
+      setDemoMode(false);
       localStorage.setItem("vitals_user", JSON.stringify(data.user));
+      setHistory(ensureFullHistory());
       return { success: true };
     } catch (error) {
       console.error("Signup error:", error);
@@ -101,8 +234,11 @@ export function VitalsProvider({ children }) {
   };
 
   const logout = () => {
+    if (user?.email) syncVitalsToDB(vitals, user.email);
     setUser(null);
     setIsAuthenticated(false);
+    setDemoMode(true);
+    setHistory(ensureFullHistory());
     localStorage.removeItem("vitals_user");
   };
 
@@ -126,70 +262,33 @@ export function VitalsProvider({ children }) {
     }
   };
 
-  useEffect(() => {
-    if (!vitals.isTracking || !isAuthenticated) return;
+  const getHealthAverages = () => {
+    if (history.length === 0) return { sleep: 0, distance: 0, screenTime: 0 };
+    const count = history.length;
+    const sums = history.reduce((acc, curr) => ({
+      sleep: acc.sleep + curr.sleep,
+      distance: acc.distance + curr.distance,
+      screenTime: acc.screenTime + curr.screenTime
+    }), { sleep: 0, distance: 0, screenTime: 0 });
 
-    // Simulate real-time screen time increase
-    const interval = setInterval(() => {
-      setVitals((prev) => ({
-        ...prev,
-        screenTime: prev.screenTime + 0.1, // Increment screen time
-        // Higher activity (simulated by interaction) increases stress slightly
-        stressLevel: Math.min(100, Math.max(0, prev.stressLevel + (Math.random() - 0.45) * 2))
-      }));
-    }, 6000); // Update every 6 seconds for simulation
-
-    return () => clearInterval(interval);
-  }, [vitals.isTracking]);
-
-  // Activity detection for Distance/Steps
-  useEffect(() => {
-    if (typeof window === "undefined" || !vitals.isTracking) return;
-
-    const handleMotion = () => {
-      lastActivityRef.current = Date.now();
-      // Simulate walking if motion detected (in a real app we'd use Geolocation/Sensors)
-      if (Math.random() > 0.8) {
-        setVitals(prev => ({
-          ...prev,
-          steps: prev.steps + 1,
-          distance: prev.distance + 0.0008 // roughly 0.8m per step
-        }));
-      }
+    return {
+      sleep: parseFloat((sums.sleep / count).toFixed(1)),
+      distance: parseFloat((sums.distance / count).toFixed(1)),
+      screenTime: Math.round(sums.screenTime / count)
     };
-
-    window.addEventListener("mousemove", handleMotion);
-    window.addEventListener("keypress", handleMotion);
-
-    return () => {
-      window.removeEventListener("mousemove", handleMotion);
-      window.removeEventListener("keypress", handleMotion);
-    };
-  }, [vitals.isTracking]);
-
-  // Automated Sleep Detection (Heuristic: Long period of inactivity at night)
-  useEffect(() => {
-    const sleepCheck = setInterval(() => {
-      const now = new Date();
-      const hours = now.getHours();
-      const idleTime = (Date.now() - lastActivityRef.current) / 1000 / 60; // in minutes
-
-      // If idle for > 30 mins during night hours
-      if (idleTime > 30 && (hours >= 22 || hours <= 6)) {
-        setVitals(prev => ({ ...prev, sleepQuality: Math.min(100, prev.sleepQuality + 1) }));
-      }
-    }, 60000);
-
-    return () => clearInterval(sleepCheck);
-  }, []);
+  };
 
   return (
     <VitalsContext.Provider value={{ 
       vitals, 
-      setVitals, 
+      history,
+      averages: getHealthAverages(),
+      recommendations,
+      completeRecommendation,
       user, 
       isAuthenticated, 
       isInitializing,
+      demoMode,
       login, 
       signup, 
       logout,
