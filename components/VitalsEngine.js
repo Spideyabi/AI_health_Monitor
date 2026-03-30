@@ -11,10 +11,10 @@ const VitalsContext = createContext({
   isInitializing: true,
   login: async () => ({ success: false }),
   signup: async () => ({ success: false }),
-  logout: () => {},
+  logout: () => { },
   updateProfile: async () => ({ success: false }),
-  setUser: () => {},
-  completeRecommendation: () => {}
+  setUser: () => { },
+  completeRecommendation: () => { }
 });
 
 export function VitalsProvider({ children }) {
@@ -38,10 +38,10 @@ export function VitalsProvider({ children }) {
 
   const lastActivityRef = useRef(typeof Date !== 'undefined' ? Date.now() : 0);
 
-  const ensureFullHistory = (realData = []) => {
+  const ensureFullHistory = (realData = [], isDemo = false) => {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const today = new Date();
-    
+
     // Create a map of existing data by date
     const dataMap = {};
     realData.forEach(item => {
@@ -58,15 +58,25 @@ export function VitalsProvider({ children }) {
       if (dataMap[dateStr]) {
         return { ...dataMap[dateStr], day: dayName };
       } else {
-        // Generate random placeholder for missing days to make the graph look active in demo/new accounts
-        return {
-          day: dayName,
-          date: dateStr,
-          sleep: parseFloat((Math.random() * 2 + 6).toFixed(1)),
-          distance: parseFloat((Math.random() * 4 + 1).toFixed(1)),
-          screenTime: Math.floor(Math.random() * 200) + 60,
-          isPlaceholder: true
-        };
+        if (isDemo) {
+          return {
+            day: dayName,
+            date: dateStr,
+            sleep: parseFloat((Math.random() * 2 + 6).toFixed(1)),
+            distance: parseFloat((Math.random() * 4 + 1).toFixed(1)),
+            screenTime: Math.floor(Math.random() * 200) + 60,
+            isPlaceholder: true
+          };
+        } else {
+          return {
+            day: dayName,
+            date: dateStr,
+            sleep: 0,
+            distance: 0,
+            screenTime: 0,
+            isPlaceholder: false
+          };
+        }
       }
     });
 
@@ -97,28 +107,28 @@ export function VitalsProvider({ children }) {
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
         setIsAuthenticated(true);
-        
+
         try {
           const res = await fetch(`/api/vitals/history?email=${parsedUser.email}`);
           const data = await res.json();
           if (data.success) {
-            setHistory(ensureFullHistory(data.history));
-            
+            setHistory(ensureFullHistory(data.history, false));
+
             const todayStr = new Date().toISOString().split('T')[0];
             const latest = data.history.find(r => r.date === todayStr);
             if (latest) {
               setVitals({ sleep: latest.sleep, distance: latest.distance, screenTime: latest.screenTime });
             }
           } else {
-            setHistory(ensureFullHistory());
+            setHistory(ensureFullHistory([], false));
           }
         } catch (err) {
-          setHistory(ensureFullHistory());
+          setHistory(ensureFullHistory([], false));
         }
       } else {
-        setHistory(ensureFullHistory());
+        setHistory(ensureFullHistory([], true));
       }
-      
+
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
         Notification.requestPermission();
       }
@@ -154,7 +164,7 @@ export function VitalsProvider({ children }) {
   }, [recommendations]);
 
   const completeRecommendation = (id) => {
-    setRecommendations(prev => prev.map(r => 
+    setRecommendations(prev => prev.map(r =>
       r.id === id ? { ...r, lastDone: Date.now() } : r
     ));
   };
@@ -176,10 +186,39 @@ export function VitalsProvider({ children }) {
 
   useEffect(() => {
     if (!demoMode && isAuthenticated && user?.email) {
-      const interval = setInterval(() => {
-        setVitals(v => ({ ...v, screenTime: v.screenTime + 1 }));
-      }, 60000);
-      return () => clearInterval(interval);
+      let intervalId;
+
+      const updateScreenTime = () => {
+        if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+          setVitals(v => ({ ...v, screenTime: v.screenTime + 1 }));
+        }
+      };
+
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        intervalId = setInterval(updateScreenTime, 60000);
+      }
+
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          if (!intervalId) intervalId = setInterval(updateScreenTime, 60000);
+        } else {
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+        }
+      };
+
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+      }
+
+      return () => {
+        if (intervalId) clearInterval(intervalId);
+        if (typeof document !== 'undefined') {
+          document.removeEventListener('visibilitychange', handleVisibilityChange);
+        }
+      };
     }
   }, [demoMode, isAuthenticated, user]);
 
@@ -192,7 +231,7 @@ export function VitalsProvider({ children }) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Login failed");
-      
+
       setUser(data.user);
       setIsAuthenticated(true);
       setDemoMode(false);
@@ -202,7 +241,9 @@ export function VitalsProvider({ children }) {
       const histRes = await fetch(`/api/vitals/history?email=${data.user.email}`);
       const histData = await histRes.json();
       if (histData.success) {
-        setHistory(ensureFullHistory(histData.history));
+        setHistory(ensureFullHistory(histData.history, false));
+      } else {
+        setHistory(ensureFullHistory([], false));
       }
 
       return { success: true };
@@ -225,7 +266,7 @@ export function VitalsProvider({ children }) {
       setIsAuthenticated(true);
       setDemoMode(false);
       localStorage.setItem("vitals_user", JSON.stringify(data.user));
-      setHistory(ensureFullHistory());
+      setHistory(ensureFullHistory([], false));
       return { success: true };
     } catch (error) {
       console.error("Signup error:", error);
@@ -238,7 +279,7 @@ export function VitalsProvider({ children }) {
     setUser(null);
     setIsAuthenticated(false);
     setDemoMode(true);
-    setHistory(ensureFullHistory());
+    setHistory(ensureFullHistory([], true));
     localStorage.removeItem("vitals_user");
   };
 
@@ -264,8 +305,14 @@ export function VitalsProvider({ children }) {
 
   const getHealthAverages = () => {
     if (history.length === 0) return { sleep: 0, distance: 0, screenTime: 0 };
-    const count = history.length;
-    const sums = history.reduce((acc, curr) => ({
+
+    // Only average actual recorded days (exclude placeholders and zeroed empty days)
+    const activeDays = history.filter(h => !h.isPlaceholder && (h.sleep > 0 || h.distance > 0 || h.screenTime > 0));
+
+    if (activeDays.length === 0) return { sleep: 0, distance: 0, screenTime: 0 };
+
+    const count = activeDays.length;
+    const sums = activeDays.reduce((acc, curr) => ({
       sleep: acc.sleep + curr.sleep,
       distance: acc.distance + curr.distance,
       screenTime: acc.screenTime + curr.screenTime
@@ -279,18 +326,18 @@ export function VitalsProvider({ children }) {
   };
 
   return (
-    <VitalsContext.Provider value={{ 
-      vitals, 
+    <VitalsContext.Provider value={{
+      vitals,
       history,
       averages: getHealthAverages(),
       recommendations,
       completeRecommendation,
-      user, 
-      isAuthenticated, 
+      user,
+      isAuthenticated,
       isInitializing,
       demoMode,
-      login, 
-      signup, 
+      login,
+      signup,
       logout,
       updateProfile,
       setUser

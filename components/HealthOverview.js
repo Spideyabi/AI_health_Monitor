@@ -2,14 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Brain, 
-  Apple, 
-  Pill, 
-  TrendingUp, 
-  TrendingDown, 
-  Zap, 
-  ShieldCheck, 
+import {
+  Brain,
+  Apple,
+  Pill,
+  TrendingUp,
+  TrendingDown,
+  Zap,
+  ShieldCheck,
   Activity,
   ChevronRight,
   Info
@@ -22,21 +22,37 @@ export default function HealthOverview() {
   const [report, setReport] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const [isCalculated, setIsCalculated] = useState(true);
+
   useEffect(() => {
     const fetchReport = async () => {
       if (!averages) return;
+
+      // Enforce 24-hour rule for real accounts
+      if (user?.createdAt) {
+        const createdTime = new Date(user.createdAt).getTime();
+        const now = new Date().getTime();
+        const hoursSinceCreation = (now - createdTime) / (1000 * 60 * 60);
+
+        if (hoursSinceCreation < 24) {
+          setIsCalculated(false);
+          setIsLoading(false);
+          return;
+        }
+      }
+
       setIsLoading(true);
       const data = await generateHealthReport(averages);
       setReport(data);
       setIsLoading(false);
     };
     fetchReport();
-  }, [averages]);
+  }, [averages, user]);
 
   if (isLoading || isInitializing) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <motion.div 
+        <motion.div
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
           className="w-12 h-12 border-4 border-purple-500/20 border-t-purple-500 rounded-full"
@@ -46,8 +62,29 @@ export default function HealthOverview() {
     );
   }
 
+  if (!isCalculated) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex flex-col items-center justify-center min-h-[400px] text-center p-8 stats-card bg-white/5 border-amber-500/20 max-w-2xl mx-auto"
+      >
+        <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center mb-6">
+          <Activity size={32} className="text-amber-500 opacity-50" />
+        </div>
+        <h2 className="text-2xl font-black mb-3">Analysis Pending</h2>
+        <p className="text-zinc-400 mb-6 leading-relaxed max-w-md">
+          Your Biological Health Report requires at least 24 hours of data to establish an accurate baseline.
+        </p>
+        <div className="px-4 py-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-sm font-medium text-purple-400">
+          Still not being calculated. Please visit after 24 hrs.
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="space-y-8"
@@ -71,7 +108,7 @@ export default function HealthOverview() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <motion.div 
+        <motion.div
           whileHover={{ y: -5 }}
           className="stats-card bg-gradient-to-b from-purple-500/10 to-transparent border-purple-500/20"
         >
@@ -97,7 +134,7 @@ export default function HealthOverview() {
           </div>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           whileHover={{ y: -5 }}
           className="stats-card bg-gradient-to-b from-emerald-500/10 to-transparent border-emerald-500/20"
         >
@@ -119,7 +156,7 @@ export default function HealthOverview() {
           </div>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           whileHover={{ y: -5 }}
           className="stats-card bg-gradient-to-b from-amber-500/10 to-transparent border-amber-500/20"
         >
@@ -164,9 +201,9 @@ export default function HealthOverview() {
                 <td className="py-6 text-center font-black text-indigo-400">{report.averages.sleep}h</td>
                 <td className="py-6 text-center text-zinc-600 font-medium">7.5h</td>
                 <td className="py-6 text-right">
-                   <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${report.averages.sleep >= 7 ? "bg-emerald-500/10 text-emerald-500" : "bg-red-500/10 text-red-500"}`}>
-                     {report.averages.sleep >= 7 ? "Optimal" : "Deficit"}
-                   </span>
+                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${report.averages.sleep >= 7 ? "bg-emerald-500/10 text-emerald-500" : "bg-red-500/10 text-red-500"}`}>
+                    {report.averages.sleep >= 7 ? "Optimal" : "Deficit"}
+                  </span>
                 </td>
               </tr>
               <tr className="border-b border-white/5">
@@ -174,9 +211,9 @@ export default function HealthOverview() {
                 <td className="py-6 text-center font-black text-emerald-400">{report.averages.distance}km</td>
                 <td className="py-6 text-center text-zinc-600 font-medium">5.0km</td>
                 <td className="py-6 text-right">
-                   <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${report.averages.distance >= 4 ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"}`}>
-                     {report.averages.distance >= 4 ? "Active" : "Sedentary"}
-                   </span>
+                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${report.averages.distance >= 4 ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"}`}>
+                    {report.averages.distance >= 4 ? "Active" : "Sedentary"}
+                  </span>
                 </td>
               </tr>
               <tr>
@@ -184,9 +221,9 @@ export default function HealthOverview() {
                 <td className="py-6 text-center font-black text-purple-400">{report.averages.screenTime}m</td>
                 <td className="py-6 text-center text-zinc-600 font-medium">&lt; 300m</td>
                 <td className="py-6 text-right">
-                   <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${report.averages.screenTime < 360 ? "bg-emerald-500/10 text-emerald-500" : "bg-red-500/10 text-red-500"}`}>
-                     {report.averages.screenTime < 360 ? "Safe" : "Extreme"}
-                   </span>
+                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${report.averages.screenTime < 360 ? "bg-emerald-500/10 text-emerald-500" : "bg-red-500/10 text-red-500"}`}>
+                    {report.averages.screenTime < 360 ? "Safe" : "Extreme"}
+                  </span>
                 </td>
               </tr>
             </tbody>

@@ -2,16 +2,16 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  ClipboardList, 
-  Utensils, 
-  Stethoscope, 
-  ArrowRight, 
-  ArrowLeft, 
-  CheckCircle2, 
-  AlertCircle, 
-  Home, 
-  MapPin, 
+import {
+  ClipboardList,
+  Utensils,
+  Stethoscope,
+  ArrowRight,
+  ArrowLeft,
+  CheckCircle2,
+  AlertCircle,
+  Home,
+  MapPin,
   ShieldCheck,
   Hospital,
   Save,
@@ -66,18 +66,69 @@ export default function HealthCheck() {
     return symptom.toLowerCase().includes("fever");
   };
 
-  const getNearbyHospitals = () => {
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  const fetchNearbyHospitals = async (lat, lng) => {
+    const fetchWithRadius = async (radiusMeters) => {
+      const query = `
+        [out:json][timeout:15];
+        (
+          node["amenity"="hospital"](around:${radiusMeters}, ${lat}, ${lng});
+          node["amenity"="clinic"](around:${radiusMeters}, ${lat}, ${lng});
+        );
+        out 5;
+      `;
+      const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("API error");
+      return await res.json();
+    };
+
+    try {
+      let data = await fetchWithRadius(10000); // 10km
+
+      if (!data.elements || data.elements.length === 0) {
+        // Fallback to 15km if none found in 10Km
+        data = await fetchWithRadius(15000); // 15km
+      }
+
+      if (data.elements && data.elements.length > 0) {
+        return data.elements.map(el => {
+          const dist = calculateDistance(lat, lng, el.lat, el.lon);
+          return {
+            name: el.tags?.name || "Local Medical Center",
+            phone: el.tags?.phone || el.tags?.["contact:phone"] || "Phone Not Available",
+            address: el.tags?.["addr:street"]
+              ? `${el.tags?.["addr:housenumber"] || ""} ${el.tags?.["addr:street"]}`.trim()
+              : "Location on Map",
+            distance: `${dist.toFixed(1)} km`,
+            rawDist: dist
+          };
+        })
+          .sort((a, b) => a.rawDist - b.rawDist)
+          .slice(0, 5); // Up to 5 hospitals
+      }
+    } catch (error) {
+      console.error("Failed to fetch hospitals:", error);
+    }
+
+    // Fallback if API fails or absolutely no hospitals found even at 15km
     return [
-      { name: "City General Hospital", phone: "+1234567890", address: "123 Main St", distance: "1.2 km" },
-      { name: "St. Jude Medical Center", phone: "+1234567891", address: "456 Oak Ave", distance: "2.5 km" },
-      { name: "Lakeside Community Health", phone: "+1234567892", address: "789 Lake View", distance: "3.8 km" },
-      { name: "Sunrise Urgent Care", phone: "+1234567893", address: "101 Sun Blvd", distance: "4.1 km" },
-      { name: "Central Wellness Clinic", phone: "+1234567894", address: "202 Center Plaza", distance: "5.5 km" }
+      { name: "Nearest Regional Hospital", phone: "Phone Not Available", address: "Emergency Walk-In", distance: "Unknown" }
     ];
   };
 
   const validateStep = (currentStep) => {
-    switch(currentStep) {
+    switch (currentStep) {
       case 1: return formData.lastMeal && formData.sleepHours;
       case 2: return formData.primarySymptom;
       case 3: return formData.duration;
@@ -95,11 +146,30 @@ export default function HealthCheck() {
 
   const handleCalculateDiagnosis = async () => {
     setIsAnalyzing(true);
-    
+
+    let userLocation = null;
     if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      });
+      try {
+        userLocation = await new Promise((resolve, reject) => {
+          // Add a 5-second timeout in case user ignores prompt
+          const timeoutId = setTimeout(() => reject(new Error("Timeout")), 5000);
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              clearTimeout(timeoutId);
+              const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+              setLocation(loc);
+              resolve(loc);
+            },
+            (err) => {
+              clearTimeout(timeoutId);
+              resolve(null); // Resolve null if user denies
+            },
+            { timeout: 5000 }
+          );
+        });
+      } catch (err) {
+        // userLocation remains null
+      }
     }
 
     try {
@@ -113,11 +183,19 @@ export default function HealthCheck() {
         history: `Allergies: ${formData.allergies || "None"}. History: ${formData.conditions || "None"}.`,
         severity: formData.severity
       };
-      
+
       const result = await analyzeHealth(aiInput);
       setDiagnosis(result);
       if (result.type === 'hospital' || result.type === 'doctor') {
-        setNearbyHospitals(getNearbyHospitals());
+        if (userLocation) {
+          const facilities = await fetchNearbyHospitals(userLocation.lat, userLocation.lng);
+          setNearbyHospitals(facilities);
+        } else {
+          setNearbyHospitals([
+            { name: "Nearest Regional Hospital", phone: "Not provided", address: "Emergency Walk-In", distance: "Unknown" },
+            { name: "Local First Aid Clinic", phone: "Not provided", address: "Check Map for Route", distance: "Unknown" }
+          ]);
+        }
       }
       setStep(5);
     } catch (error) {
@@ -152,20 +230,18 @@ export default function HealthCheck() {
       {step < 5 && (
         <div className="flex items-center justify-between mb-12 relative">
           <div className="absolute top-1/2 left-0 w-full h-1 bg-white/5 -translate-y-1/2 z-0" />
-          <div 
-            className="absolute top-1/2 left-0 h-1 bg-purple-600 -translate-y-1/2 z-0 transition-all duration-500" 
+          <div
+            className="absolute top-1/2 left-0 h-1 bg-purple-600 -translate-y-1/2 z-0 transition-all duration-500"
             style={{ width: `${((step - 1) / (steps.length - 1)) * 100}%` }}
           />
           {steps.map((s) => (
             <div key={s.id} className="relative z-10 flex flex-col items-center">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${
-                step >= s.id ? "bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.5)]" : "bg-zinc-900 text-zinc-500"
-              }`}>
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${step >= s.id ? "bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.5)]" : "bg-zinc-900 text-zinc-500"
+                }`}>
                 {step > s.id ? <CheckCircle2 size={20} /> : s.icon}
               </div>
-              <span className={`text-[10px] uppercase tracking-widest mt-2 font-bold ${
-                step >= s.id ? "text-purple-400" : "text-zinc-600"
-              }`}>{s.title}</span>
+              <span className={`text-[10px] uppercase tracking-widest mt-2 font-bold ${step >= s.id ? "text-purple-400" : "text-zinc-600"
+                }`}>{s.title}</span>
             </div>
           ))}
         </div>
@@ -181,7 +257,7 @@ export default function HealthCheck() {
             className="stats-card p-10"
           >
             <h2 className="text-2xl font-bold mb-8">Lifestyle & Habits</h2>
-            
+
             <div className="space-y-6 mb-10">
               <div>
                 <label className="text-sm text-zinc-400 mb-2 block font-medium">Last Main Meal (e.g. Pasta, Salad)</label>
@@ -189,7 +265,7 @@ export default function HealthCheck() {
                   type="text"
                   className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
                   value={formData.lastMeal}
-                  onChange={(e) => setFormData({...formData, lastMeal: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, lastMeal: e.target.value })}
                   required
                 />
               </div>
@@ -200,7 +276,7 @@ export default function HealthCheck() {
                   <select
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-3.5 outline-none focus:border-purple-500/50 transition-all text-zinc-300 font-bold"
                     value={formData.waterIntake}
-                    onChange={(e) => setFormData({...formData, waterIntake: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, waterIntake: e.target.value })}
                   >
                     <option value="low">Low (&lt; 1L)</option>
                     <option value="normal">Normal (2L+)</option>
@@ -214,7 +290,7 @@ export default function HealthCheck() {
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-3.5 outline-none focus:border-purple-500/50 transition-all font-bold"
                     placeholder="e.g. 7"
                     value={formData.sleepHours}
-                    onChange={(e) => setFormData({...formData, sleepHours: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, sleepHours: e.target.value })}
                     required
                   />
                 </div>
@@ -226,10 +302,9 @@ export default function HealthCheck() {
                   {['yes', 'no'].map((opt) => (
                     <button
                       key={opt}
-                      onClick={() => setFormData({...formData, junkFood: opt})}
-                      className={`flex-1 py-3 rounded-xl border capitalize font-bold transition-all ${
-                        formData.junkFood === opt ? "bg-purple-600/20 border-purple-500 text-purple-400" : "bg-white/5 border-white/10 text-zinc-500"
-                      }`}
+                      onClick={() => setFormData({ ...formData, junkFood: opt })}
+                      className={`flex-1 py-3 rounded-xl border capitalize font-bold transition-all ${formData.junkFood === opt ? "bg-purple-600/20 border-purple-500 text-purple-400" : "bg-white/5 border-white/10 text-zinc-500"
+                        }`}
                     >
                       {opt}
                     </button>
@@ -239,8 +314,8 @@ export default function HealthCheck() {
             </div>
 
             <div className="flex justify-end">
-              <button 
-                onClick={handleNext} 
+              <button
+                onClick={handleNext}
                 disabled={!validateStep(1)}
                 className="btn-primary group disabled:opacity-30 disabled:cursor-not-allowed"
               >
@@ -259,7 +334,7 @@ export default function HealthCheck() {
             className="stats-card p-10"
           >
             <h2 className="text-2xl font-bold mb-8">Symptoms & Severity</h2>
-            
+
             <div className="space-y-6 mb-10">
               <div className="grid gap-6">
                 <div>
@@ -269,7 +344,7 @@ export default function HealthCheck() {
                     placeholder="e.g. Fever, Headache"
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all"
                     value={formData.primarySymptom}
-                    onChange={(e) => setFormData({...formData, primarySymptom: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, primarySymptom: e.target.value })}
                     required
                   />
                 </div>
@@ -280,7 +355,7 @@ export default function HealthCheck() {
                     placeholder="e.g. Stomach, Head"
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
                     value={formData.symptomLocation}
-                    onChange={(e) => setFormData({...formData, symptomLocation: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, symptomLocation: e.target.value })}
                   />
                 </div>
               </div>
@@ -297,7 +372,7 @@ export default function HealthCheck() {
                   <select
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-red-500/50 transition-all text-zinc-300 font-bold"
                     value={formData.temperature}
-                    onChange={(e) => setFormData({...formData, temperature: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, temperature: e.target.value })}
                   >
                     <option value="normal">Normal (98.6°F)</option>
                     <option value="warm">Warm / Mild Fever</option>
@@ -312,14 +387,13 @@ export default function HealthCheck() {
                   {['low', 'medium', 'high'].map((level) => (
                     <button
                       key={level}
-                      onClick={() => setFormData({...formData, severity: level})}
-                      className={`flex-1 py-3 rounded-xl border transition-all capitalize font-bold ${
-                        formData.severity === level 
+                      onClick={() => setFormData({ ...formData, severity: level })}
+                      className={`flex-1 py-3 rounded-xl border transition-all capitalize font-bold ${formData.severity === level
                           ? level === 'low' ? "bg-emerald-500/20 border-emerald-500 text-emerald-400" :
                             level === 'medium' ? "bg-amber-500/20 border-amber-500 text-amber-400" :
-                            "bg-red-500/20 border-red-500 text-red-400 shadow-[0_0_20px_rgba(239,68,68,0.2)]"
+                              "bg-red-500/20 border-red-500 text-red-400 shadow-[0_0_20px_rgba(239,68,68,0.2)]"
                           : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10"
-                      }`}
+                        }`}
                     >
                       {level}
                     </button>
@@ -332,8 +406,8 @@ export default function HealthCheck() {
               <button onClick={handleBack} className="flex items-center text-zinc-400 hover:text-white transition-colors font-bold">
                 <ArrowLeft className="mr-2" size={18} /> Back
               </button>
-              <button 
-                onClick={handleNext} 
+              <button
+                onClick={handleNext}
                 className="btn-primary group"
               >
                 Continue <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" />
@@ -351,7 +425,7 @@ export default function HealthCheck() {
             className="stats-card p-10"
           >
             <h2 className="text-2xl font-bold mb-8">Medical Timeline</h2>
-            
+
             <div className="space-y-6 mb-10">
               <div className="flex gap-4">
                 <div className="flex-1">
@@ -361,7 +435,7 @@ export default function HealthCheck() {
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
                     placeholder="e.g. 3 days"
                     value={formData.duration}
-                    onChange={(e) => setFormData({...formData, duration: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
                     required
                   />
                 </div>
@@ -370,7 +444,7 @@ export default function HealthCheck() {
                   <select
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all text-zinc-300 font-bold"
                     value={formData.onset}
-                    onChange={(e) => setFormData({...formData, onset: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, onset: e.target.value })}
                   >
                     <option value="gradual">Gradual</option>
                     <option value="sudden">Sudden</option>
@@ -384,10 +458,9 @@ export default function HealthCheck() {
                   {['constant', 'intermittent', 'worsening'].map((opt) => (
                     <button
                       key={opt}
-                      onClick={() => setFormData({...formData, consistency: opt})}
-                      className={`flex-1 py-3 rounded-xl border capitalize font-bold transition-all ${
-                        formData.consistency === opt ? "bg-purple-600/20 border-purple-500 text-purple-400" : "bg-white/5 border-white/10 text-zinc-500"
-                      }`}
+                      onClick={() => setFormData({ ...formData, consistency: opt })}
+                      className={`flex-1 py-3 rounded-xl border capitalize font-bold transition-all ${formData.consistency === opt ? "bg-purple-600/20 border-purple-500 text-purple-400" : "bg-white/5 border-white/10 text-zinc-500"
+                        }`}
                     >
                       {opt}
                     </button>
@@ -400,8 +473,8 @@ export default function HealthCheck() {
               <button onClick={handleBack} className="flex items-center text-zinc-400 hover:text-white transition-colors font-bold">
                 <ArrowLeft className="mr-2" size={18} /> Back
               </button>
-              <button 
-                onClick={handleNext} 
+              <button
+                onClick={handleNext}
                 disabled={!validateStep(3)}
                 className="btn-primary group"
               >
@@ -420,7 +493,7 @@ export default function HealthCheck() {
             className="stats-card p-10"
           >
             <h2 className="text-2xl font-bold mb-8">Medical Context & History</h2>
-            
+
             <div className="space-y-6 mb-10">
               <div>
                 <label className="text-sm text-zinc-400 mb-2 block font-medium">Existing Conditions (Optional)</label>
@@ -429,7 +502,7 @@ export default function HealthCheck() {
                   placeholder="e.g. Asthma, Diabetes, None"
                   className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
                   value={formData.conditions}
-                  onChange={(e) => setFormData({...formData, conditions: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, conditions: e.target.value })}
                 />
               </div>
 
@@ -440,7 +513,7 @@ export default function HealthCheck() {
                   placeholder="e.g. Penicillin, Pollen, None"
                   className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none focus:border-purple-500/50 transition-all font-bold"
                   value={formData.allergies}
-                  onChange={(e) => setFormData({...formData, allergies: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, allergies: e.target.value })}
                 />
               </div>
 
@@ -455,8 +528,8 @@ export default function HealthCheck() {
               <button onClick={handleBack} className="flex items-center text-zinc-400 hover:text-white transition-colors font-bold">
                 <ArrowLeft className="mr-2" size={18} /> Back
               </button>
-              <button 
-                onClick={handleCalculateDiagnosis} 
+              <button
+                onClick={handleCalculateDiagnosis}
                 disabled={isAnalyzing}
                 className="bg-gradient-to-r from-purple-600 to-pink-600 px-8 py-3 rounded-xl font-bold shadow-lg hover:shadow-purple-500/20 transition-all flex items-center gap-2"
               >
@@ -483,7 +556,7 @@ export default function HealthCheck() {
             </div>
             <h2 className="text-2xl font-bold mb-4">AI Engine Processing</h2>
             <p className="text-zinc-500 max-w-sm mb-8">Our cognitive system is correlating your symptoms with clinical datasets and biometric patterns...</p>
-            
+
             <div className="flex gap-2">
               {[0, 1, 2].map((i) => (
                 <div key={i} className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
@@ -501,20 +574,18 @@ export default function HealthCheck() {
           >
             <div className={`stats-card p-0 overflow-hidden relative border-none shadow-[0_30px_60px_-15px_rgba(0,0,0,0.5)]`}>
               {/* Header Banner */}
-              <div className={`p-8 md:p-12 relative ${
-                diagnosis.type === 'hospital' ? 'bg-gradient-to-br from-red-600/20 to-zinc-900 border-b border-red-500/20' : 
-                diagnosis.type === 'doctor' ? 'bg-gradient-to-br from-amber-600/20 to-zinc-900 border-b border-amber-500/20' :
-                'bg-gradient-to-br from-emerald-600/20 to-zinc-900 border-b border-emerald-500/20'
-              }`}>
+              <div className={`p-8 md:p-12 relative ${diagnosis.type === 'hospital' ? 'bg-gradient-to-br from-red-600/20 to-zinc-900 border-b border-red-500/20' :
+                  diagnosis.type === 'doctor' ? 'bg-gradient-to-br from-amber-600/20 to-zinc-900 border-b border-amber-500/20' :
+                    'bg-gradient-to-br from-emerald-600/20 to-zinc-900 border-b border-emerald-500/20'
+                }`}>
                 <div className="flex flex-col md:flex-row md:items-center gap-6 relative z-10">
-                  <div className={`w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg ${
-                    diagnosis.type === 'hospital' ? 'bg-red-500 text-white shadow-red-500/20' : 
-                    diagnosis.type === 'doctor' ? 'bg-amber-500 text-white shadow-amber-500/20' :
-                    'bg-emerald-500 text-white shadow-emerald-500/20'
-                  }`}>
-                    {diagnosis.type === 'hospital' ? <Hospital size={40} /> : 
-                     diagnosis.type === 'doctor' ? <Stethoscope size={40} /> : 
-                     <Home size={40} />}
+                  <div className={`w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg ${diagnosis.type === 'hospital' ? 'bg-red-500 text-white shadow-red-500/20' :
+                      diagnosis.type === 'doctor' ? 'bg-amber-500 text-white shadow-amber-500/20' :
+                        'bg-emerald-500 text-white shadow-emerald-500/20'
+                    }`}>
+                    {diagnosis.type === 'hospital' ? <Hospital size={40} /> :
+                      diagnosis.type === 'doctor' ? <Stethoscope size={40} /> :
+                        <Home size={40} />}
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
@@ -523,7 +594,7 @@ export default function HealthCheck() {
                     </div>
                     <h2 className="text-4xl md:text-5xl font-black mb-2 tracking-tight">{diagnosis.title}</h2>
                     <p className="text-zinc-400 text-lg max-w-2xl leading-relaxed mb-4">{diagnosis.desc}</p>
-                    
+
                     {/* Cause of Illness Mention */}
                     <div className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 w-fit">
                       <BrainCircuit size={18} className="text-purple-400" />
@@ -533,12 +604,11 @@ export default function HealthCheck() {
                       </div>
                     </div>
                   </div>
-                  <button 
+                  <button
                     onClick={handleSaveToDatabase}
                     disabled={isSaved}
-                    className={`mt-4 md:mt-0 flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all ${
-                      isSaved ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/50" : "bg-white text-black hover:bg-zinc-200"
-                    }`}
+                    className={`mt-4 md:mt-0 flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all ${isSaved ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/50" : "bg-white text-black hover:bg-zinc-200"
+                      }`}
                   >
                     {isSaved ? <CheckCircle2 size={20} /> : <Save size={20} />}
                     {isSaved ? "Verified & Stored" : "Save to Archive"}
@@ -556,10 +626,10 @@ export default function HealthCheck() {
                 <h3 className="text-xs uppercase tracking-[0.2em] font-black text-zinc-500 mb-8 flex items-center gap-2">
                   <TrendingDown size={14} /> Recommended Treatment Protocol
                 </h3>
-                
+
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
                   {diagnosis.treatmentPlan && Object.entries(diagnosis.treatmentPlan).map(([key, item]) => (
-                    <motion.div 
+                    <motion.div
                       key={key}
                       whileHover={{ y: -5 }}
                       className="bg-white/5 border border-white/10 rounded-3xl p-6 relative overflow-hidden group"
@@ -573,7 +643,7 @@ export default function HealthCheck() {
                       <p className="text-zinc-500 text-[10px] uppercase font-bold tracking-tighter mb-1">{key}</p>
                       <h4 className="text-2xl font-black tracking-tight">{item.target}</h4>
                       <p className="text-zinc-400 text-xs">{item.unit}</p>
-                      
+
                       {/* Decorative Gradient */}
                       <div className="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-purple-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                     </motion.div>
@@ -590,7 +660,7 @@ export default function HealthCheck() {
                       {diagnosis.advice.map((item, i) => (
                         <div key={i} className="flex gap-4 items-start p-5 rounded-2xl bg-white/5 border border-white/10 hover:border-purple-500/30 transition-all hover:translate-x-1">
                           <div className="w-8 h-8 rounded-full bg-purple-600/20 flex items-center justify-center shrink-0">
-                            <span className="text-purple-400 font-black text-xs">{i+1}</span>
+                            <span className="text-purple-400 font-black text-xs">{i + 1}</span>
                           </div>
                           <p className="text-zinc-300 text-sm leading-relaxed">{item}</p>
                         </div>
@@ -602,21 +672,19 @@ export default function HealthCheck() {
                   <div className="space-y-8">
                     {(diagnosis.type === 'hospital' || diagnosis.type === 'doctor') && (
                       <div className="space-y-6">
-                        <h3 className={`text-xs uppercase tracking-[0.2em] font-black flex items-center gap-2 ${
-                          diagnosis.type === 'hospital' ? 'text-red-400' : 'text-amber-400'
-                        }`}>
+                        <h3 className={`text-xs uppercase tracking-[0.2em] font-black flex items-center gap-2 ${diagnosis.type === 'hospital' ? 'text-red-400' : 'text-amber-400'
+                          }`}>
                           <Hospital size={14} /> Nearby Medical Facilities
                         </h3>
                         <div className="grid gap-4">
                           {nearbyHospitals.map((hospital, i) => (
-                            <motion.div 
+                            <motion.div
                               key={i}
                               initial={{ opacity: 0, y: 10 }}
                               animate={{ opacity: 1, y: 0 }}
                               transition={{ delay: i * 0.1 }}
-                              className={`stats-card p-6 bg-white/5 border hover:border-opacity-100 transition-all ${
-                                diagnosis.type === 'hospital' ? 'border-red-500/20 hover:border-red-500/40' : 'border-amber-500/20 hover:border-amber-500/40'
-                              }`}
+                              className={`stats-card p-6 bg-white/5 border hover:border-opacity-100 transition-all ${diagnosis.type === 'hospital' ? 'border-red-500/20 hover:border-red-500/40' : 'border-amber-500/20 hover:border-amber-500/40'
+                                }`}
                             >
                               <div className="flex justify-between items-start mb-4">
                                 <div>
@@ -625,26 +693,28 @@ export default function HealthCheck() {
                                     <MapPin size={12} /> {hospital.address} • {hospital.distance}
                                   </p>
                                 </div>
-                                <div className={`p-2 rounded-lg ${
-                                  diagnosis.type === 'hospital' ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'
-                                }`}>
+                                <div className={`p-2 rounded-lg ${diagnosis.type === 'hospital' ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'
+                                  }`}>
                                   <Hospital size={20} />
                                 </div>
                               </div>
                               <div className="flex gap-3">
-                                <a 
-                                  href={`tel:${hospital.phone}`}
-                                  className="flex-1 py-2 px-4 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-sm font-bold flex items-center justify-center gap-2"
+                                <a
+                                  href={hospital.phone && hospital.phone !== "Phone Not Available" ? `tel:${hospital.phone.replace(/[^0-9+]/g, '')}` : "#"}
+                                  onClick={(e) => (!hospital.phone || hospital.phone === "Phone Not Available") && e.preventDefault()}
+                                  className={`flex-1 py-2 px-4 rounded-xl border transition-all text-sm font-bold flex items-center justify-center gap-2 ${hospital.phone && hospital.phone !== "Phone Not Available"
+                                      ? "bg-white/5 border-white/10 hover:bg-white/10 text-white"
+                                      : "bg-white/5 border-white/10 text-zinc-600 opacity-50 cursor-not-allowed"
+                                    }`}
                                 >
-                                  <Phone size={14} /> Appt Call
+                                  <Phone size={14} /> {(hospital.phone && hospital.phone !== "Phone Not Available") ? "Appt Call" : "No Number"}
                                 </a>
-                                <a 
+                                <a
                                   href={`https://www.google.com/maps/search/${encodeURIComponent(hospital.name + " " + hospital.address)}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className={`flex-1 py-2 px-4 rounded-xl text-white transition-all text-sm font-bold flex items-center justify-center gap-2 ${
-                                    diagnosis.type === 'hospital' ? 'bg-red-600 hover:bg-red-500' : 'bg-amber-600 hover:bg-amber-500'
-                                  }`}
+                                  className={`flex-1 py-2 px-4 rounded-xl text-white transition-all text-sm font-bold flex items-center justify-center gap-2 ${diagnosis.type === 'hospital' ? 'bg-red-600 hover:bg-red-500' : 'bg-amber-600 hover:bg-amber-500'
+                                    }`}
                                 >
                                   <Navigation size={14} /> Map Direction
                                 </a>
@@ -656,19 +726,19 @@ export default function HealthCheck() {
                     )}
 
                     {!diagnosis.doctor && diagnosis.type === 'home' && (
-                       <div className="stats-card p-8 bg-black/40 border-purple-500/20">
-                       <h3 className="text-xs uppercase tracking-[0.2em] font-black text-purple-400 mb-6 flex items-center gap-2">
-                         <BrainCircuit size={14} /> AI Analysis Reasoning
-                       </h3>
-                       <div className="space-y-4">
-                         {diagnosis.aiInsights.map((insight, i) => (
-                           <div key={i} className="flex items-start gap-3">
-                             <div className="w-1.5 h-1.5 rounded-full bg-purple-500 mt-1.5 shrink-0" />
-                             <p className="text-zinc-500 text-xs leading-relaxed italic">{insight}</p>
-                           </div>
-                         ))}
-                       </div>
-                     </div>
+                      <div className="stats-card p-8 bg-black/40 border-purple-500/20">
+                        <h3 className="text-xs uppercase tracking-[0.2em] font-black text-purple-400 mb-6 flex items-center gap-2">
+                          <BrainCircuit size={14} /> AI Analysis Reasoning
+                        </h3>
+                        <div className="space-y-4">
+                          {diagnosis.aiInsights.map((insight, i) => (
+                            <div key={i} className="flex items-start gap-3">
+                              <div className="w-1.5 h-1.5 rounded-full bg-purple-500 mt-1.5 shrink-0" />
+                              <p className="text-zinc-500 text-xs leading-relaxed italic">{insight}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
 
                     {diagnosis.doctor && (
@@ -694,12 +764,12 @@ export default function HealthCheck() {
             </div>
 
             <div className="flex justify-center flex-col items-center gap-4">
-              <button 
+              <button
                 onClick={() => {
                   setStep(1);
                   setDiagnosis(null);
                   setIsSaved(false);
-                  setFormData({ 
+                  setFormData({
                     lastMeal: "", junkFood: "no", waterIntake: "normal", sleepHours: "",
                     primarySymptom: "", symptomLocation: "", severity: "low", temperature: "normal",
                     duration: "", onset: "gradual", consistency: "intermittent",
